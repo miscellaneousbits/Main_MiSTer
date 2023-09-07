@@ -1,9 +1,9 @@
 # makefile to fail if any command in pipe is failed.
 SHELL = /bin/bash -o pipefail
 
-# using gcc version 10.2.1
+MAKEFLAGS += "-j $(shell nproc)"
 
-BASE    = arm-none-linux-gnueabihf
+BASE    = gcc-arm/bin/arm-none-linux-gnueabihf
 
 CC      = $(BASE)-gcc
 LD      = $(BASE)-ld
@@ -33,11 +33,11 @@ C_SRC =   $(wildcard *.c) \
           $(wildcard ./lib/lzma/*.c) \
           $(wildcard ./lib/flac/src/*.c) \
           $(wildcard ./lib/libchdr/*.c) \
-          lib/libco/arm.c 
+          lib/libco/arm.c
 
 CPP_SRC = $(wildcard *.cpp) \
           $(wildcard ./lib/serial_server/library/*.cpp) \
-          $(wildcard ./support/*/*.cpp) 
+          $(wildcard ./support/*/*.cpp)
 
 IMG =     $(wildcard *.png)
 
@@ -50,13 +50,15 @@ DFLAGS	= $(INCLUDE) -D_7ZIP_ST -DPACKAGE_VERSION=\"1.3.3\" -DFLAC_API_EXPORTS -D
 CFLAGS	= $(DFLAGS) -Wall -Wextra -Wno-strict-aliasing -Wno-stringop-overflow -Wno-stringop-truncation -Wno-format-truncation -Wno-psabi -Wno-restrict -c -O3
 LFLAGS	= -lc -lstdc++ -lm -lrt $(IMLIB2_LIB) -Llib/bluetooth -lbluetooth -lpthread
 
+OUTPUT_FILTER = sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
+
 ifeq ($(PROFILING),1)
 	DFLAGS += -DPROFILING
 endif
 
 $(PRJ): $(OBJ)
 	$(Q)$(info $@)
-	$(Q)$(CC) -o $@ $+ $(LFLAGS) 
+	$(Q)$(CC) -o $@ $+ $(LFLAGS)
 	$(Q)cp $@ $@.elf
 	$(Q)$(STRIP) $@
 
@@ -64,27 +66,36 @@ $(PRJ): $(OBJ)
 clean:
 	$(Q)rm -f *.elf *.map *.lst *.user *~ $(PRJ)
 	$(Q)rm -rf obj DTAR* x64
-	$(Q)find . \( -name '*.o' -o -name '*.d' -o -name '*.bak' -o -name '*.rej' -o -name '*.org' \) -exec rm -f {} \;
+	$(Q)find . \( -name '*.o' -o -name '*.d' -o -name '*.bak' -o -name '*.rej' -o -name '*.org' \) -a -not -wholename './gcc-arm/*' -exec rm -f {} \;
+
+.PHONY: toolchain
+toolchain:
+	$(Q)./get_toolchain.sh
 
 %.c.o: %.c
 	$(Q)$(info $<)
-	$(Q)$(CC) $(CFLAGS) -std=gnu99 -o $@ -c $< 2>&1 | sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
+	$(Q)$(CC) $(CFLAGS) -std=gnu99 -o $@ -c $< 2>&1 | $(OUTPUT_FILTER)
 
 %.cpp.o: %.cpp
 	$(Q)$(info $<)
-	$(Q)$(CC) $(CFLAGS) -std=gnu++14 -Wno-class-memaccess -o $@ -c $< 2>&1 | sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
+	$(Q)$(CC) $(CFLAGS) -std=gnu++14 -Wno-class-memaccess -o $@ -c $< 2>&1 | $(OUTPUT_FILTER)
 
 %.png.o: %.png
 	$(Q)$(info $<)
-	$(Q)$(LD) -r -b binary -o $@ $< 2>&1 | sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
+	$(Q)$(LD) -r -b binary -z noexecstack -o $@ $< 2>&1 | $(OUTPUT_FILTER)
 
 ifneq ($(MAKECMDGOALS), clean)
+ifneq ($(MAKECMDGOALS), toolchain)
 -include $(DEP)
 endif
+endif
+
 %.c.d: %.c
+	$(Q)$(info $< >> $@)
 	$(Q)$(CC) $(DFLAGS) -MM $< -MT $@ -MT $*.c.o -MF $@ 2>&1 | sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
 
 %.cpp.d: %.cpp
+	$(Q)$(info $< >> $@)
 	$(Q)$(CC) $(DFLAGS) -MM $< -MT $@ -MT $*.cpp.o -MF $@ 2>&1 | sed -e 's/\(.[a-zA-Z]\+\):\([0-9]\+\):\([0-9]\+\):/\1(\2,\ \3):/g'
 
 # Ensure correct time stamp
